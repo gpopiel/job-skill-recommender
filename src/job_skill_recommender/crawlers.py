@@ -1,36 +1,18 @@
 import pandas as pd  # To get dataframe object
-import requests  # To obtain page request
-import mysql.connector  # To perform MySQL DB Operations
-from bs4 import BeautifulSoup  # To fetch website data
 import re  # Regular expressions
-import pdb
+from bs4 import BeautifulSoup  # To fetch website data
+import mysql.connector  # To perform MySQL DB Operations
+import requests  # To obtain page request
+from datetime import date
 
 
 class JobOfferScanner():
-    def __init__(self, url, database, databaseTable, host, user, password):
-        self.url = url
-        page = requests.get(self.url)
-        self.soup = BeautifulSoup(page.content, 'html.parser')
-        self.df = None
-        self.database = database
-        self.databaseTable = databaseTable
-        self.host = host
-        self.user = user
-        self.password = password
-        self.cursor = None
-        self.db = None
-
-    def mySqlDatabaseConnect(self):
-        '''Connects to mySQL and creates a cursor'''
-        # Connect to mysql server
-        self.db = mysql.connector.connect(
-            host=self.host,
-            user=self.user,
-            password=self.password,
-            database=self.database
-        )
-
-        self.cursor = self.db.cursor(buffered=True)
+    def __init__(self):
+        # self.url = url
+        self.dfjobDescription = None
+        self.dfskills = None
+        self.dfequipment = None
+        self.soup = None
 
     def remove_html_tags(self, string):
         """Remove all html tags from a string"""
@@ -68,9 +50,13 @@ class JobOfferScanner():
         selection = [re.sub(regex, '', i) for i in selection]
         return selection
 
-    def collectData(self):
+    def collectData(self, url):
+        page = requests.get(url)
+        self.soup = BeautifulSoup(page.content, 'html.parser')
+
         # Job ID
-        jobId = {'jobId': self.url[self.url.rfind('-')+1:-1]}
+        jobId = {'jobId': url[url.rfind('-')+1:-1]}
+        jobLink = {'jobLink': url[len('https://nofluffjobs.com'):-1]}
 
         # Job TITLE
         jobTitle = self.selectElementByCSS('h1', regex=r'[\]\[]')[0]
@@ -82,9 +68,11 @@ class JobOfferScanner():
             skills = self.selectElementByCSS(
                 '.mb-0 .ng-star-inserted span', regex=r" |\[|\]")
             skills = self.replaceSpecialCharacters(skills)
-            skills = {'SKL_'+item: 1 for item in skills}
+            skills = {'skills': skills}
+
+            # skills = {'SKL_'+item: 1 for item in skills}
         except:
-            skills = {'SKL_NONE': 1}
+            skills = {'skills': 'N/A'}
 
         # SALARY
         try:
@@ -102,17 +90,24 @@ class JobOfferScanner():
                 'salaryLow': -1, 'salaryHigh': -1, 'salaryDetails': -1}
 
         # JOB CATEGORY
-        jobCategory = {'jobCategory': self.formatString(
-            self.selectElementByCSS('aside', regex='[\]\[]')[0])[0]}
-
+        try:
+            jobCategory = {'jobCategory': self.formatString(
+                self.selectElementByCSS('aside', regex='[\]\[]')[0])[0]}
+        except:
+            jobCategory = {'jobCategory': 'N/A'}
         # LEVEL
-        jobSeniority = {'jobSeniority': "//".join(self.formatString(
-            self.selectElementByCSS('#posting-seniority .ng-star-inserted')[0:2]))}
+        try:
+            jobSeniority = {'jobSeniority': "//".join(self.formatString(
+                self.selectElementByCSS('#posting-seniority .ng-star-inserted')[0:2]))}
+        except:
+            jobSeniority = {'jobSeniority': "N/A"}
 
         # COMPANY NAME
-        companyName = {'companyName': self.formatString(
-            self.selectElementByCSS('#posting-header')[-1])[0]}
-
+        try:
+            companyName = {'companyName': self.formatString(
+                self.selectElementByCSS('#posting-header')[-1])[0]}
+        except:
+            companyName = {'companyName': 'N/A'}
         # Szczegóły oferty
         try:
             additionalInfo = {'additionalInfo': "//".join(self.formatString(
@@ -133,6 +128,27 @@ class JobOfferScanner():
                 self.selectElementByCSS('#posting-specs', regex='[\]\[]'))[0]}
         except:
             jobDetails = {'jobDetails': 'N/A'}
+
+        # Job Requirements
+        try:
+            jobRequirements = {'jobRequirements': self.formatString(
+                self.selectElementByCSS('#posting-requirements', regex='[\]\[]'))[0]}
+        except:
+            jobRequirements = {'jobRequirements': 'N/A'}
+
+        # Job Description
+        try:
+            jobDescription = {'jobDescription': self.formatString(
+                self.selectElementByCSS('#posting-description', regex='[\]\[]'))[0]}
+        except:
+            jobDescription = {'jobDescription': 'N/A'}
+
+        # Job Description
+        try:
+            jobTasks = {'jobTasks': self.formatString(
+                self.selectElementByCSS('#posting-tasks', regex='[\]\[]'))[0]}
+        except:
+            jobTasks = {'jobTasks': 'N/A'}
 
         # Job - additional extras
         try:
@@ -158,70 +174,24 @@ class JobOfferScanner():
         try:
             equipment = self.formatString(self.selectElementByCSS(
                 '#posting-equipment')[0].split())[1:-1]
-            equipment = {"EQUIP_"+item: 1 for item in equipment}
+            equipment = {'equipment': equipment}
         except:
-            equipment = {'EQUIP_NONE': 1}
+            equipment = {'equipment': 'N/A'}
 
-        self.df = pd.DataFrame([{**jobId, **jobTitle, **companyName, **jobCategory, **jobSeniority, **salary,
-                                 **additionalInfo, **jobMethodology, **jobDetails, **jobExtras, **jobBenefits,
-                                **jobLocation, **skills, **equipment}])
+        collectDate = {'collectDate': date.today().strftime("%d/%m/%Y")}
 
-    def mySqlCreateNewColumnsIfNotExist(self):
-        '''
-        Dynamic creation of columns if they do not exists in sql DB yet
-        cursor - cursor object from mysql.connector library
-        Cols - an array of columns to check
-        '''
-        cols = [i for i in self.df.columns]  # Fetch All Column names
-        # Prepare columns for a query;
-        columnsToQuery = "`"+"`,`".join(cols)+"`"
+        # Create dataframe instance joining all the fields
+        self.dfjobDescription = pd.DataFrame([{**jobId, **jobLink, **collectDate, **jobTitle, **companyName, **jobCategory, **jobSeniority, **salary,
+                                               **additionalInfo, **jobMethodology, **jobRequirements, **jobDescription, **jobTasks,
+                                               **jobDetails, **jobExtras, **jobBenefits,
+                                               **jobLocation}])
 
-        # Prepare a query
-        query = f'SELECT * from {self.databaseTable} LIMIT 1;'
-        self.cursor.execute(query)  # Execute
-        databaseColumns = self.cursor.column_names  # Get ALL database column names
+        skillCount = len(skills['skills'])  # Number of Sklills
+        self.dfskills = pd.DataFrame([
+            [jobId['jobId']]*skillCount, [jobLink['jobLink']]*skillCount, skills['skills']]).T
+        self.dfskills.columns = ['jobId', 'jobLink', 'skills']
 
-        # For every column in items
-        counter = 0
-        for item in cols:
-            # Check if it is not already defined in the database
-            if (item not in databaseColumns):
-                # If it isn't - perform a query to add it
-                self.cursor.execute(
-                    f"ALTER TABLE {self.databaseTable} ADD COLUMN `{item}` TINYINT;")
-                counter += 1
-        print(f'{counter} columns inserted')
-
-    def insertValuesIntoSqlDatabase(self):
-        '''
-        Inserts values in MySQL Database
-        assumes prior connection to database using msql.connector method
-        WARNING: throws an error on duplicate key (UPDATE TODO)
-        database - database name
-        databaseTable - database table to insert values to
-        cursor - cursor object to execute queries
-        df - dataframe containing values to be inserted
-        '''
-
-        cols = [i for i in self.df.columns]  # Fetch All Column names
-        columnsToQuery = "`"+"`,`".join(cols)+"`"
-
-        # Make a tuple containing values
-        tuples = [tuple(x) for x in self.df.to_numpy()]
-        # Build a query. It inserts values to corresponding columns that were found on db
-        # TODO ON DUPLICATE KEY UPDATE jobId=jobId
-        query = re.sub(
-            "\[|\]", "",   f"INSERT INTO {self.databaseTable} ({columnsToQuery}) VALUES {tuples} ;")
-        # Try executing the query
-        try:
-            self.cursor.execute(query)
-            self.db.commit()
-            print(self.cursor.rowcount, "record inserted.")
-        except Exception as e:
-            print(e)
-            print(
-                'Error - something went wrong with mySQL db udate.\n Check for duplicate id')
-
-
-if __name__ == "__main__":
-    print('Module')
+        equipmentCount = len(equipment['equipment'])  # Number of equipment
+        self.dfequipment = pd.DataFrame([
+            [jobId['jobId']]*equipmentCount, [jobLink['jobLink']]*equipmentCount, equipment['equipment']]).T
+        self.dfequipment.columns = ['jobId', 'jobLink', 'equipment']

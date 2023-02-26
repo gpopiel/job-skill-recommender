@@ -7,7 +7,8 @@ import requests  # To collect a request
 import time  # To setup a sleep function
 import random  # To setup a random variable for sleeping break between scrapes
 import pandas as pd  # To build a DataFrame object
-import mysql.connector  # To connect and send data to DB
+import mysql.connector
+
 import re  # Regex operations
 
 # PART ONE - FETCH ALL JOB LINKS, BUILD A SIMPLE DICTIONARY
