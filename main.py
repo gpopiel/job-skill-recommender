@@ -1,3 +1,7 @@
+'''
+Loops through all jobs and collects data that is immediately saved to MySQL database
+'''
+
 import random  # To setup a random variable for sleeping break between scrapes
 import time
 import mysql.connector
