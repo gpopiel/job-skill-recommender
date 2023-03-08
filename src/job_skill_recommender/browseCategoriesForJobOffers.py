@@ -80,50 +80,55 @@ for category in categories:
 
 # PART TWO - CONNECT TO DATABASE AND SEND THE DATA, OMMITING DUPLICATES
 
-# # INPUT DB CREDENTIALS
-# database = 'webScrap'
-# databaseTable = 'jobLinkDataTable'
-# # databaseTable = 'scrapDataTable'
-# host = 'localhost'
-# user = 'root'
-# password = '12344321'
+# INPUT DB CREDENTIALS
+database = 'webScrap'
+databaseTable = 'jobLinkDataTable'
+host = 'localhost'
+user = 'root'
+password = '12344321'
 
-# # Connect to database
-# db = mysql.connector.connect(
-#     host=host,
-#     user=user,
-#     password=password,
-#     database=database
-# )
+# Connect to database
+db = mysql.connector.connect(
+    host=host,
+    user=user,
+    password=password,
+    database=database
+)
 
-# cursor = db.cursor(buffered=True)  # Set up cursor for db operations
+cursor = db.cursor(buffered=True)  # Set up cursor for db operations
+# Fetch all the collected job ids
+query = f'select jobLink, jobId from {databaseTable};'
+# Execute the query, build the pandas dataframe
+jobsSearchedIds = pd.read_sql(query, db)
+jobsSearchedIds = jobsSearchedIds.jobId.values.tolist()  # Convert ids to list
+# Keep only the rows that are not present in the database
+df = df[~df['jobId'].isin(jobsSearchedIds)]
 
-# # TODO - INCLUDE COLUMN IN FUTURE LOOPS
-# # Unique offer id, regardless of category
-# df.jobUniqueId = df.jobId.str.replace('^(.*-)', '')
+
+# Unique offer id, regardless of category
 
 
-# # Fetch column names as an array
-# cols = [i for i in df.columns]  # Fetch All Column names
-# # Build a query-ready part of column names
-# columnsToQuery = "`"+"`,`".join(cols)+"`"
+# Fetch column names as an array
+cols = [i for i in df.columns]  # Fetch All Column names
+# Build a query-ready part of column names
+columnsToQuery = "`"+"`,`".join(cols)+"`"
 
-# # DATA  INSERTION
-# # For every record in dataframe, starting second (first is None placeholder)
-# for i in range(2, len(df)+1):
-#     # Make a tuple containing values
-#     tuples = [tuple(x) for x in df.iloc[i-1:i].to_numpy()]
-#     # Build a query. It inserts values to corresponding columns that were found on db
-#     # Duplicates are ignored
-#     query = re.sub(
-#         "\[|\]", "",   f"INSERT INTO {databaseTable}({columnsToQuery}) VALUES {tuples} ON DUPLICATE KEY UPDATE jobId=jobId;")
-#     # Try executing the query
-#     print(f'{i} / {len(df)} iteration')
-#     try:
-#         cursor.execute(query)
-#         db.commit()
-#         print(cursor.rowcount, "record inserted.")
-#     except Exception as e:
-#         print(e)
-#         print(
-#             'Error - something went wrong with mySQL db udate.')
+# DATA  INSERTION
+# For every record in dataframe, starting second (first is None placeholder)
+for i in range(2, len(df)+1):
+    # Make a tuple containing values
+    tuples = [tuple(x) for x in df.iloc[i-1:i].to_numpy()]
+    # Build a query. It inserts values to corresponding columns that were found on db
+    # Duplicates are ignored
+    query = re.sub(
+        "\[|\]", "",   f"INSERT INTO {databaseTable}({columnsToQuery}) VALUES {tuples} ON DUPLICATE KEY UPDATE jobId=jobId;")
+    # Try executing the query
+    print(f'{i} / {len(df)} iteration')
+    try:
+        cursor.execute(query)
+        db.commit()
+        print(cursor.rowcount, "record inserted.")
+    except Exception as e:
+        print(e)
+        print(
+            'Error - something went wrong with mySQL db udate.')

@@ -2,6 +2,7 @@
 Loops through all jobs and collects data that is immediately saved to MySQL database
 '''
 
+import sys
 import random  # To setup a random variable for sleeping break between scrapes
 import time
 import mysql.connector
@@ -9,10 +10,11 @@ from src.job_skill_recommender.crawlers import JobOfferScanner
 from src.job_skill_recommender.databaseFunctions import mySqlDatabaseConnect
 from src.job_skill_recommender.databaseFunctions import insertValuesIntoSqlDatabase
 
+
 # # GET LINKS THAT NEED TO BE COLLECTED
 # INPUT DB CREDENTIALS
 database = 'webScrap'
-databaseTable = 'jobLinksTable'
+databaseTable = 'linksToCollectTable'
 # databaseTable = 'scrapDataTable'
 host = 'localhost'
 user = 'root'
@@ -34,7 +36,8 @@ root = 'https://nofluffjobs.com'  # Root part of every link
 
 # JOB OFFER COLLECTION
 database = 'webScrap'
-databaseTable = 'scrapDataTable'
+# databaseTable = 'scrapDataTable'
+
 
 # INITIALIZE THE CLASS
 website = JobOfferScanner()
@@ -63,7 +66,7 @@ for job in jobLinks:
         err_id.append(job[0])
         err_log.append(e)
      # Insert values to SQL database
-    randum = random.randint(3, 30)  # Determine sleep length
+    randum = random.randint(3, 20)  # Determine sleep length
     # Display progress
     progress += 1
     print(
