@@ -2,22 +2,13 @@
 
 USE webScrap;
 
--- CREATE EMPTY DATABASE
-create table webScrap.jobLinkDataTable (
-jobId VARCHAR (100) PRIMARY KEY,
-jobUniqueId VARCHAR (100),
-category VARCHAR (100),
-pagination TINYINT,
-currentSearchPage VARCHAR (250),
-jobPositionCounter smallint,
-jobLink VARCHAR (500)
-);
-
 -- See basic attributes
 describe jobLinkDataTable;
 
 -- Get total number of rows
 SELECT COUNT(*) FROM jobLinkDataTable;
+-- 1st iteration: 2522
+-- 2nd iteration: 2957
 
 -- How many job offers per category?
 SELECT 
@@ -28,7 +19,7 @@ GROUP BY category
 ORDER BY numberOfJobs DESC;
 
 -- Create a table that stores all the duplicates (to check for potential errors)
-DROP TABLE duplicates;
+DROP TABLE IF EXISTS duplicates;
 CREATE TABLE duplicates
 SELECT 
     jobUniqueId,jobLink,
@@ -37,6 +28,7 @@ FROM
     jobLinkDataTable
 GROUP BY jobUniqueId,jobLink
 HAVING COUNT(jobUniqueId) > 1;
+
 
 -- Check for duplicates on job ids
 SELECT 
@@ -50,3 +42,23 @@ ON jobLinkDataTable.jobUniqueId = duplicates.jobUniqueId;
 CREATE TABLE jobLinksTable
 SELECT DISTINCT jobLink from jobLinkDataTable
 LIMIT 999999;
+
+select * from jobLinkDataTable;
+
+-- Create a temporary table that would be fetched by python skill for links to investigate
+DROP TABLE IF EXISTS linksToCollectTable;
+CREATE TABLE linksToCollectTable AS
+SELECT jobLink FROM (
+	SELECT 
+    jobLinkDataTable.jobId, jobLinkDataTable.jobLink, jobDescriptionTableFormat.jobTitle 
+    FROM 
+    jobLinkDataTable
+	left join jobDescriptionTableFormat on jobLinkDataTable.jobId = jobDescriptionTableFormat.jobId) AS TEMP
+WHERE isnull(jobTitle);
+
+
+
+select * from jobDescriptionTableFormat;
+
+
+
