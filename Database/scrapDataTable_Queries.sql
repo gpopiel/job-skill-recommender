@@ -1,72 +1,38 @@
-use webScrap; -- Database name
+-- PHASE TWO: COLLECTED JOB OFFERS DATA PROCESSING
 
--- *********SETUP, DATA CLEANING
+use webScrap; -- Database name
 
 -- Basic queries for database connectivity and columns
 describe skillsTable;
-select * from skillsTable LIMIT 1;
-select * from jobDescriptionTable LIMIT 10;
-select * from equipmentTable LIMIT 1;
-select * from jobLinkDataTable LIMIT 1;
+describe jobDescriptionTable;
+describe equipmentTable;
+describe jobLinkDataTable;
+
+select * from skillsTable LIMIT 1;  -- Raw skills table, long format
+select * from jobDescriptionTable LIMIT 10; -- Raw job dimensions table
+select * from equipmentTable LIMIT 1; -- Raw equipment table, long format
+select * from jobLinkDataTable LIMIT 1; -- Raw joblink table (sources the collected jobs)
 
 -- How many skill records
 select count(*) from skillsTable;
 
--- PART 1: DUPLICATES REMOVAL
--- STEP 1: Prepare a view
--- Count distinct skills (to remove duplicates)
-DROP VIEW IF EXISTS VJobXSkills;
-CREATE VIEW VJobXSkills AS
-    SELECT 
-        skillId,
-        jobLink,
-        skills,
-        CONCAT(jobId, skills) AS jobXSkills
-    FROM
-        skillsTable;
+-- REMOVE DUPLICATES by using partition by clause -- Store in a new table
+CREATE TABLE IF NOT EXISTS skillsTableNoDuplicates AS
+SELECT * FROM (
+	SELECT * ,
+	row_number() over (partition by jobXSkills) as duplicate_count
+	FROM (
+		SELECT *, CONCAT(jobId, skills) AS jobXSkills
+		FROM skillsTable) as skillsTable_withNewColumn
+	) AS duplicateSearchTable
+WHERE duplicate_count=1;
 
--- STEP2: Isolate out only the duplicates to check
-SELECT
-jobXSkills, count(jobXSkills)
-FROM
-VjobXSkills
-GROUP BY
-jobXSkills
-HAVING
-COUNT(jobXSkills) > 1;
+-- UNTIL DELTA IS IMPLEMENTED, FK CONSTRAINED REMOVED
+-- TODO, REWRITE FOR DELTA
+ALTER TABLE describedSkillsAgrTable
+DROP FOREIGN KEY describedskillsagrtable_ibfk_1;
 
-
-
-
--- STEP3: REMOVE DUPLICATES using inner join (performance check needed, causing timeouts). 
-SET SQL_SAFE_UPDATES = 0; -- Disable safe updates
-	DELETE t1 FROM VjobXSkills t1
-	INNER JOIN VJobXSkills t2
-	WHERE
-	t1.skillId < t2.skillId AND
-	t1.jobXSkills = t2.jobXSkills;
-SET SQL_SAFE_UPDATES = 1; -- Re-enable safe updates
-
-
--- Create a dictionary for job seniority
-DROP TABLE IF EXISTS jobSeniorityTable;
-CREATE TABLE jobSeniorityTable AS SELECT DISTINCT jobSeniority,
-    CASE
-        WHEN jobSeniority = 'Trainee' THEN '1. Trainee'
-        WHEN jobSeniority = 'Mid//Senior' THEN '6. Mid-Senior'
-        WHEN jobSeniority = 'Junior' THEN '3. Junior'
-        WHEN jobSeniority = 'Junior//Mid' THEN '4. Junior-Mid'
-        WHEN jobSeniority = 'Mid' THEN '5. Mid'
-        WHEN jobSeniority = 'Trainee//Junior' THEN '2. Trainee-Junior'
-        WHEN jobSeniority = 'Senior' THEN '6. Senior'
-        WHEN jobSeniority = 'Senior//Expert' THEN '7. Senior-Expert'
-        WHEN jobSeniority = 'Expert' THEN '8. Expert'
-    END AS jobSeniorityCategories FROM
-    jobDescriptionTable
-ORDER BY jobSeniorityCategories;
-
-
--- Clean the job description table, extract some features
+-- Clean the job description table, extract some features (READY BI TABLE)
 DROP TABLE IF EXISTS jobDescriptionTableFormat;
 CREATE TABLE jobDescriptionTableFormat SELECT *, ROUND((salaryLow + salaryHighAdj) / 2, 0) AS salaryMean FROM
     (SELECT 
@@ -96,146 +62,98 @@ CREATE TABLE jobDescriptionTableFormat SELECT *, ROUND((salaryLow + salaryHighAd
     LIMIT 100000) AS jobDescriptionTableFormat;
 
 -- Update a key
+-- TODO: DELTA 
 ALTER TABLE jobDescriptionTableFormat
-ADD PRIMARY KEY (jobId);
+ADD PRIMARY KEY (jobLink);
 
--- Export CSV
-select * from jobDescriptionTableFormat;
-select * from jobDescriptionTableFormat
-INTO OUTFILE '/Users/grzegorzpopielnicki/Documents/GitHub/job-skill-recommender/temp.csv'
-FIELDS ENCLOSED BY '"'
-TERMINATED BY ';'
-ESCAPED BY '"'
-LINES TERMINATED BY '\r\n';
-
-
-
--- Create view to matches both skills and job description, especially salary
+-- DIMENSION AND FACT INTEGRATION:
+-- Create table that matches both skills and job description, especially salary
 DROP TABLE IF EXISTS describedSkillsTable;
 CREATE TABLE describedSkillsTable AS
-select
-skillsTable.jobLink, skillsTable.jobId, skillsTable.skills, 
+select skillsTableNoDuplicates.skillId,
+skillsTableNoDuplicates.jobLink, skillsTableNoDuplicates.jobId, skillsTableNoDuplicates.skills,
 jobCategory, salaryLow, salaryHighAdj, salaryMean, jobSeniorityCategories
 from 
-skillsTable
-left join jobDescriptionTableFormat  on skillsTable.jobLink = jobDescriptionTableFormat.jobLink
+skillsTableNoDuplicates
+left join jobDescriptionTableFormat  on skillsTableNoDuplicates.jobLink = jobDescriptionTableFormat.jobLink
 where salaryLow > 0;
 
-
--- Prepare most characteristic job Category per skill, to help skill categorization
-DROP TABLE IF EXISTS SkillwithMainCategoryTable;
-CREATE TABLE SkillwithMainCategoryTable AS
-WITH added_row_number AS (
-	SELECT *, 
-    ROW_NUMBER() OVER(PARTITION BY skills ORDER BY N DESC) AS irow_number
-	FROM (
-		SELECT skills, jobCategory, count(skills) as N
-		from jobXSkills
-		group by jobCategory, SKILLS
-		order by jobCategory, N DESC
-	) as tempTABLE2
-	group by skills, jobCategory
-    ) 
-SELECT *
-FROM added_row_number
-WHERE irow_number = 1;
-
-
-alter table SkillwithMainCategoryTable
-ADD PRIMARY KEY (skills);
-
-
--- Prepare dictionary table for processing and categorisation
+-- TEMPORARY TABLE TO CLEAN UP SKILL TAGS
+-- PREPARE a unique set up skill TAGS
+-- AS an addtion, paste in category with highest frequency for a given skill
 DROP TABLE IF EXISTS skillsDictionary;
 CREATE TABLE skillsDictionary AS
-SELECT 
-    TEMP.skills,
-    TEMP.NumSkills,
-    SkillwithMainCategoryTable.jobCategory, skillsCategorised.skillsAgr
-FROM
-    (SELECT 
-        REPLACE(skills, ';', '//') AS skills,
-            COUNT(skills) AS NumSkills
-    FROM
-        describedSkillsTable
-    GROUP BY skills) AS TEMP
-        LEFT JOIN
-    SkillwithMainCategoryTable ON TEMP.skills = SkillwithMainCategoryTable.skills 
-		LEFT JOIN 
-    skillsCategorised ON TEMP.skills = skillsCategorised.skills;
-    
+		WITH added_row_number AS (
+			SELECT *,
+			ROW_NUMBER() OVER(PARTITION BY skills ORDER BY N DESC) AS irow_number
+			FROM (
+				SELECT skills, jobCategory, count(skills) as N
+				from describedSkillsTable
+				group by jobCategory, SKILLS
+				order by jobCategory, N DESC
+			) as tempTABLE2
+				group by skills, jobCategory
+			) 
+		SELECT *
+		FROM added_row_number
+		WHERE irow_number = 1;
 
+-- Make basic column modification
+UPDATE skillsDictionary
+SET skills = REPLACE(skills, ';', '//');
+
+-- map skills to clean them up (use dictionary procedure)
 call mapSkills();
-select * from skillsDictionarySQL
-where ISNULL(skillsAgr);
+DROP TABLE IF EXISTS skillsDictionary;
 
+UPDATE skillsDictionarySQL
+SET skillsAgr = UPPER(skillsAgr);
 
+-- FINAL RESULT OF SKILLS TABLE
 -- 3/ match skills with aggregated skills
--- Replace ";" occurances to avoid join issues from csv
 drop table if exists describedSkillsAgrTable;
 create table describedSkillsAgrTable AS
-select jobId, jobLink, jobCategory,salaryLow, salaryHighAdj, salaryMean,
-jobSeniorityCategories, skillsDictionarySQL.skillsAgr,
-concat(jobId, '_', row_number() over (partition by jobLink order by skillsAgr)) as jobId_skillNum
-FROM (
-select jobId, jobLink, jobCategory,salaryLow, salaryHighAdj, salaryMean,
-jobSeniorityCategories, skills 
-from describedSkillsTable) AS TEMP
-left join skillsDictionarySQL 
-on TEMP.skills = skillsDictionarySQL.skills;
+	select skillId, jobId, jobLink, jobCategory,salaryLow, salaryHighAdj, salaryMean, TEMP.skills,
+	jobSeniorityCategories, skillsDictionarySQL.skillsAgr,
+	concat(jobId, '_', row_number() over (partition by jobLink order by skillsAgr)) as jobId_skillNum
+	FROM (
+		select skillId, jobId, jobLink, jobCategory,salaryLow, salaryHighAdj, salaryMean,
+		jobSeniorityCategories, skills 
+		from describedSkillsTable) AS TEMP
+	left join skillsDictionarySQL 
+	on TEMP.skills = skillsDictionarySQL.skills;
+    
 
-
-ALTER TABLE describedSkillsAgrTable
-MODIFY jobId_skillNum VARCHAR(100);
-
+-- ADD PRIMARY AND FOREIGN KEYS
+-- TODO IN DETLTA FK WILL BE GIVEN
 ALTER TABLE describedSkillsAgrTable 
-ADD PRIMARY KEY (jobId_skillNum);
+ADD PRIMARY KEY (skillId);
 
--- Export TABLE to CSV;
+ALTER TABLE describedSkillsAgrTable ADD FOREIGN KEY (jobLink)
+REFERENCES jobDescriptionTableFormat(jobLink);
 
+ALTER TABLE describedSkillsAgrTable ADD FOREIGN KEY fk_skills (skills)
+REFERENCES skillsDictionarySQL(skills);
 
+ALTER TABLE equipmentTable ADD FOREIGN KEY fk_jobLink (jobLink)
+REFERENCES jobDescriptionTable (jobLink);
 
--- 2. Which skills are most popular next to chosen skills?
--- Check skill's co-requirement. 
-SET @skillSelection = 'SQL'; -- Set a variable for a skill to be investigated
--- Third table: compute Percentage and format
-SELECT 
-skills, skillCount, CONCAT(ROUND(skillCount / (MAX(skillCount) over())*100),"%") as skillCountPERC
-FROM (
-	-- Second table: left join all the skills (having only job offer with matching skills). Sum up
-	SELECT 
-	skills, count(skills) as skillCount
-		FROM (
-        -- First table: isolate the investiaged skill as selection
-		SELECT 
-        jobLink, skills as selectedSkill FROM VJobXSkills WHERE skills=@skillSelection
-		) AS selection 
-	LEFT JOIN VJobXSkills ON VJobXSkills.jobLink = selection.jobLink
-	GROUP BY skills
-	ORDER BY skillCount DESC
-) as skillCountTable
-GROUP BY skills;
+ALTER TABLE skillsTable ADD FOREIGN KEY fk_jobLink (jobLink)
+REFERENCES jobDescriptionTable (jobLink);
 
+ALTER TABLE describedSkillsAgrTable ADD FOREIGN KEY fk_jobLink (jobLink)
+REFERENCES jobDescriptionTable (jobLink);
 
--- What are salary ranges in categories for corresponding seniority levels?
-SELECT 
-jobCategory, jobSeniorityCategories, ROUND(AVG(salaryMean),0) AS salaryAVG, MIN(salaryLow) AS salaryMIN, MAX(salaryHighAdj) AS salaryMAX ,COUNT(*) AS NumberOfJobs
-FROM
-jobDescriptionTableFormat
-GROUP BY jobCategory, jobSeniorityCategories
-ORDER BY jobCategory, jobSeniorityCategories;
+ALTER TABLE describedSkillsAgrTable ADD FOREIGN KEY (skillId)
+REFERENCES skillsTable (skillId);
 
--- What are salaries per category?
-SELECT 
-jobCategory, ROUND(AVG(salaryMean),0) AS salaryAVG, MIN(salaryLow) AS salaryMIN, MAX(salaryHighAdj) AS salaryMAX ,COUNT(*) AS NumberOfJobs
-FROM
-jobDescriptionTableFormat
-GROUP BY jobCategory
-ORDER BY salaryAVG DESC;
+-- DROP UNUSED TABLES
+DROP TABLE skillsTableNoDuplicates;
+DROP TABLE describedSkillsTable;
+
+-- FINAL TABLES FOR BI
+select * from describedSkillsAgrTable; -- SKILLS with key features
+select * from jobDescriptionTableFormat; -- Ready table to process
 
 
 -- *** FURTHER ANALYSIS IN TABLEAU **** --
-
-
-
-
