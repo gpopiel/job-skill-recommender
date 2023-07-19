@@ -131,4 +131,4 @@ for i in range(2, len(df)+1):
     except Exception as e:
         print(e)
         print(
-            'Error - something went wrong with mySQL db udate.')
+            'Error - something went wrong with mySQL db update.')

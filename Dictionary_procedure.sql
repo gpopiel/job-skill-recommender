@@ -2481,7 +2481,7 @@ WHEN skills='LabVIEW' THEN 'spec'
 WHEN skills='Cypressdotio' THEN 'spec'
 		ELSE 'other'
     END AS skillsAgr
-    from skillsDictionary;
+    from dimSkills;
     ALTER TABLE skillsDictionarySQL
     ADD PRIMARY KEY (skills);
     
